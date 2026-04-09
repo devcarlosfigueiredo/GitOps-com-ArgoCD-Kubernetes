@@ -1,0 +1,265 @@
+# =============================================================================
+# ArgoCD Helm Values — gitops/argocd/argocd-install/values.yaml
+#
+# Instalar ArgoCD no cluster:
+#   helm repo add argo https://argoproj.github.io/argo-helm
+#   helm repo update
+#   helm upgrade --install argocd argo/argo-cd \
+#     --namespace argocd --create-namespace \
+#     --values gitops/argocd/argocd-install/values.yaml
+# =============================================================================
+
+# ─── Global ──────────────────────────────────────────────────────────────────
+global:
+  image:
+    tag: "v2.12.0"
+
+# ─── ArgoCD Server ───────────────────────────────────────────────────────────
+server:
+  replicas: 2  # HA para produção
+
+  # Expor via ingress com TLS
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    hosts:
+      - argocd.gitops-demo.example.com
+    tls:
+      - secretName: argocd-tls
+        hosts:
+          - argocd.gitops-demo.example.com
+
+  # Métricas Prometheus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+
+  # Recursos do server
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Configuração de segurança
+  config:
+    # URL base da UI
+    url: https://argocd.gitops-demo.example.com
+
+    # Timeout de sessão (8 horas)
+    server.session.maxAge: "28800"
+
+    # Desactivar login anónimo
+    users.anonymous.enabled: "false"
+
+    # Repositórios conhecidos (adicionar SSH key ou token via Secret)
+    repositories: |
+      - url: https://github.com/YOUR_ORG/gitops-argocd-demo
+        type: git
+
+    # Configuração de notificações (requer argocd-notifications)
+    resource.customizations: |
+      networking.k8s.io/Ingress:
+        health.lua: |
+          hs = {}
+          hs.status = "Healthy"
+          return hs
+
+  # RBAC — políticas de acesso
+  rbacConfig:
+    policy.default: role:readonly
+    policy.csv: |
+      # Admins têm acesso total
+      p, role:admin, applications, *, */*, allow
+      p, role:admin, clusters, *, *, allow
+      p, role:admin, repositories, *, *, allow
+      p, role:admin, projects, *, *, allow
+
+      # Developers podem sincronizar mas não deletar
+      p, role:developer, applications, sync, */*, allow
+      p, role:developer, applications, get, */*, allow
+      p, role:developer, applications, list, */*, allow
+
+      # Bind grupos (ajustar para SSO real)
+      g, platform-team, role:admin
+      g, dev-team, role:developer
+
+# ─── Application Controller ──────────────────────────────────────────────────
+controller:
+  replicas: 1
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # Aumentar workers para clusters grandes
+  env:
+    - name: ARGOCD_CONTROLLER_REPLICAS
+      value: "1"
+
+# ─── Repo Server ─────────────────────────────────────────────────────────────
+repoServer:
+  replicas: 2
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Plugin Kustomize com Helm (para charts com overlays)
+  env:
+    - name: ARGOCD_EXEC_TIMEOUT
+      value: "3m"
+
+# ─── ApplicationSet Controller ───────────────────────────────────────────────
+applicationSet:
+  enabled: true
+  replicas: 2
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ─── Notifications ───────────────────────────────────────────────────────────
+notifications:
+  enabled: true
+
+  # Templates de notificação
+  notifiers:
+    service.slack: |
+      token: $slack-token
+
+  templates:
+    template.app-sync-succeeded: |
+      slack:
+        attachments: |
+          [{
+            "title": "{{ .app.metadata.name }}",
+            "title_link": "{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#18be52",
+            "fields": [{
+              "title": "Sync Status",
+              "value": "{{.app.status.sync.status}}",
+              "short": true
+            }, {
+              "title": "Environment",
+              "value": "{{.app.metadata.labels.environment}}",
+              "short": true
+            }, {
+              "title": "Revision",
+              "value": "{{.app.status.sync.revision}}",
+              "short": false
+            }]
+          }]
+
+    template.app-sync-failed: |
+      slack:
+        attachments: |
+          [{
+            "title": "SYNC FAILED: {{ .app.metadata.name }}",
+            "title_link": "{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+            "color": "#E96D76",
+            "fields": [{
+              "title": "Error",
+              "value": "{{.app.status.conditions | toJson}}",
+              "short": false
+            }]
+          }]
+
+  triggers:
+    trigger.on-sync-succeeded: |
+      - description: Notify when app sync succeeds
+        send: [app-sync-succeeded]
+        when: app.status.operationState.phase in ['Succeeded']
+
+    trigger.on-sync-failed: |
+      - description: Notify when app sync fails
+        send: [app-sync-failed]
+        when: app.status.operationState.phase in ['Error', 'Failed']
+
+    trigger.on-health-degraded: |
+      - description: Notify when app health degrades
+        send: [app-sync-failed]
+        when: app.status.health.status == 'Degraded'
+
+  subscriptions:
+    - recipients:
+        - slack:deployments
+      triggers:
+        - on-sync-succeeded
+    - recipients:
+        - slack:alerts
+      triggers:
+        - on-sync-failed
+        - on-health-degraded
+
+# ─── Redis ───────────────────────────────────────────────────────────────────
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ─── Dex (SSO) ───────────────────────────────────────────────────────────────
+dex:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+
+  # Configurar SSO real via GitHub OAuth (exemplo):
+  # config: |
+  #   connectors:
+  #     - type: github
+  #       id: github
+  #       name: GitHub
+  #       config:
+  #         clientID: $GITHUB_CLIENT_ID
+  #         clientSecret: $GITHUB_CLIENT_SECRET
+  #         orgs:
+  #           - name: YOUR_ORG

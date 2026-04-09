@@ -1,0 +1,16 @@
+# =============================================================================
+# Base Kustomization — gitops/apps/myapp/base/kustomization.yaml
+# Define os recursos base que os overlays herdam e customizam.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+# Labels comuns aplicados a todos os recursos
+commonLabels:
+  app.kubernetes.io/name: myapp
+  app.kubernetes.io/part-of: gitops-demo
+  app.kubernetes.io/managed-by: argocd

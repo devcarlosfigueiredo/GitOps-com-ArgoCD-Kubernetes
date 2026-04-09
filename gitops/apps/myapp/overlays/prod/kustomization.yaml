@@ -1,0 +1,52 @@
+# =============================================================================
+# Prod Overlay — gitops/apps/myapp/overlays/prod/kustomization.yaml
+# Produção: alta disponibilidade, resources generosos, sync manual.
+# Promoção de dev→prod via Pull Request — nunca push directo para main.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+bases:
+  - ../../base
+
+namespace: myapp-prod
+
+namePrefix: prod-
+
+commonLabels:
+  environment: prod
+  tier: production
+
+patches:
+  - path: patch-replicas.yaml
+    target:
+      kind: Deployment
+      name: myapp
+  - path: patch-resources.yaml
+    target:
+      kind: Deployment
+      name: myapp
+  - path: patch-ingress.yaml
+    target:
+      kind: Ingress
+      name: myapp
+
+configMapGenerator:
+  - name: myapp-config
+    behavior: merge
+    literals:
+      - environment=prod
+      - app_version=stable
+      - log_level=info
+
+# Recursos adicionais apenas em prod
+resources:
+  - ingress.yaml
+  - poddisruptionbudget.yaml
+
+# ─── IMAGE TAG ───────────────────────────────────────────────────────────────
+# Promoção: PR abre com tag específica (ex: sha-abc1234) após validação em dev.
+# O merge do PR em main despoleta o sync automático do ArgoCD em prod.
+images:
+  - name: ghcr.io/YOUR_ORG/gitops-demo
+    newTag: stable  # Actualizado via PR de promoção dev→prod

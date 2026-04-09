@@ -1,0 +1,6 @@
+# Placeholder para patch de ingress em produção
+# Actualizar com host real
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp

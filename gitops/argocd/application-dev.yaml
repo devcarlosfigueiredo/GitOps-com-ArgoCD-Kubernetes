@@ -1,0 +1,79 @@
+# =============================================================================
+# ArgoCD Application — Dev
+# gitops/argocd/application-dev.yaml
+#
+# Deploy automático: qualquer push para a branch 'develop' é sincronizado.
+# Self-healing activo: mudanças manuais no cluster são revertidas para Git.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: myapp
+    environment: dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  # Finalizer garante que ArgoCD limpa os recursos quando a Application é deletada
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # AppProject com RBAC específico
+  project: gitops-demo
+
+  source:
+    repoURL: https://github.com/YOUR_ORG/gitops-argocd-demo
+    # Dev segue a branch 'develop'
+    targetRevision: develop
+    path: gitops/apps/myapp/overlays/dev
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: myapp-dev
+
+  syncPolicy:
+    # ─── Sync Automático ─────────────────────────────────────────────────────
+    automated:
+      # Prune: remove recursos que foram deletados do Git
+      prune: true
+      # Self-heal: reverte mudanças manuais no cluster para o estado do Git
+      selfHeal: true
+      # Não sincroniza se a app estiver num estado de erro (evita loops)
+      allowEmpty: false
+
+    syncOptions:
+      # Cria o namespace automaticamente se não existir
+      - CreateNamespace=true
+      # Validação de schema antes de aplicar
+      - Validate=true
+      # Usa server-side apply (melhor para campos geridos por controllers)
+      - ServerSideApply=true
+      # Não falha se recursos forem removidos com grace period
+      - PrunePropagationPolicy=foreground
+      # Aplica recursos em ordem por wave
+      - RespectIgnoreDifferences=true
+
+    # Retry automático em caso de falha de sync
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignorar campos geridos automaticamente (evita drift falso)
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        # Image Updater actualiza este campo — ignorar no diff
+        - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        # HPA gere réplicas dinamicamente — ignorar no diff
+        - /spec/replicas
+
+  # Informação de saúde personalizada
+  revisionHistoryLimit: 10

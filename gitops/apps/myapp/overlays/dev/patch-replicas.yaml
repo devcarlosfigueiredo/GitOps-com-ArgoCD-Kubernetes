@@ -1,0 +1,10 @@
+# =============================================================================
+# Dev Patch — replicas e recursos reduzidos para poupar custos em dev
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  # Dev: 1 réplica é suficiente
+  replicas: 1

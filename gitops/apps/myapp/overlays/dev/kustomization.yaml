@@ -1,0 +1,51 @@
+# =============================================================================
+# Dev Overlay — gitops/apps/myapp/overlays/dev/kustomization.yaml
+# Customizações específicas do ambiente de desenvolvimento.
+# CI actualiza o newTag automaticamente após cada build com sucesso.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Herda todos os recursos da base
+bases:
+  - ../../base
+
+# Namespace dedicado para dev
+namespace: myapp-dev
+
+# Prefixo de nome para evitar conflitos
+namePrefix: dev-
+
+# Labels adicionais de ambiente
+commonLabels:
+  environment: dev
+  tier: development
+
+# Patches específicos de dev
+patches:
+  - path: patch-replicas.yaml
+    target:
+      kind: Deployment
+      name: myapp
+  - path: patch-resources.yaml
+    target:
+      kind: Deployment
+      name: myapp
+
+# ConfigMap com valores de dev
+configMapGenerator:
+  - name: myapp-config
+    behavior: merge
+    literals:
+      - environment=dev
+      - app_version=dev-latest
+      - log_level=debug
+
+# ─── IMAGE TAG ───────────────────────────────────────────────────────────────
+# ATENÇÃO: O campo newTag abaixo é actualizado automaticamente pelo CI.
+# NÃO editar manualmente. O GitHub Actions faz:
+#   kustomize edit set image ghcr.io/YOUR_ORG/gitops-demo=ghcr.io/YOUR_ORG/gitops-demo:<sha>
+# ArgoCD detecta a alteração e sincroniza automaticamente.
+images:
+  - name: ghcr.io/YOUR_ORG/gitops-demo
+    newTag: latest  # CI actualiza este valor

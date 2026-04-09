@@ -1,0 +1,132 @@
+# =============================================================================
+# Resource Hooks — PreSync Job (migração de base de dados)
+# gitops/apps/myapp/base/db-migration-hook.yaml
+#
+# Sync Waves e Resource Hooks controlam a ordem do deploy:
+#   Wave -1 → PreSync Job (migrações DB) → executa ANTES do deployment
+#   Wave  0 → Deployment (aplicação principal)
+#   Wave  1 → PostSync Job (smoke tests) → executa APÓS o deployment
+#
+# ArgoCD aguarda que o Job termine com sucesso antes de avançar.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: myapp-db-migration
+  labels:
+    app.kubernetes.io/name: myapp
+    app.kubernetes.io/component: migration
+  annotations:
+    # Hook type: executa ANTES do sync principal
+    argocd.argoproj.io/hook: PreSync
+    # Wave: garante que corre antes dos outros recursos
+    argocd.argoproj.io/sync-wave: "-1"
+    # Política de limpeza: apagar o Job após conclusão com sucesso
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  # Retry em caso de falha (até 3 tentativas)
+  backoffLimit: 3
+  # Timeout: se não terminar em 5 minutos, falha
+  activeDeadlineSeconds: 300
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myapp
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: OnFailure
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+
+      containers:
+        - name: migration
+          image: ghcr.io/YOUR_ORG/gitops-demo:latest
+          imagePullPolicy: Always
+          command:
+            - python
+            - -c
+            - |
+              # Substituir pelo comando real de migração:
+              # alembic upgrade head
+              # python manage.py migrate
+              # flyway migrate
+              print("Running DB migrations...")
+              print("Migrations completed successfully.")
+
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: myapp-db-secret
+                  key: url
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+---
+# =============================================================================
+# PostSync Job — Smoke tests após deploy
+# Verifica que a aplicação está a responder correctamente.
+# Se falhar, o ArgoCD marca o sync como falhou.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: myapp-smoke-test
+  labels:
+    app.kubernetes.io/name: myapp
+    app.kubernetes.io/component: smoke-test
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myapp
+        app.kubernetes.io/component: smoke-test
+    spec:
+      restartPolicy: OnFailure
+
+      containers:
+        - name: smoke-test
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Running smoke tests..."
+
+              # Testar endpoint de health
+              curl -sf http://myapp/health || exit 1
+              echo "✓ /health OK"
+
+              # Testar endpoint de readiness
+              curl -sf http://myapp/ready || exit 1
+              echo "✓ /ready OK"
+
+              # Testar endpoint principal
+              curl -sf http://myapp/ || exit 1
+              echo "✓ / OK"
+
+              echo "All smoke tests passed!"
+
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

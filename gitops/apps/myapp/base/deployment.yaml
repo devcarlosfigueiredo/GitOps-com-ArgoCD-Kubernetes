@@ -1,0 +1,120 @@
+# =============================================================================
+# Base Deployment — gitops/apps/myapp/base/deployment.yaml
+# Estado desejado declarativo. ArgoCD sincroniza este estado no cluster.
+# NUNCA usar kubectl apply manualmente — o Git é a fonte de verdade.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  labels:
+    app.kubernetes.io/name: myapp
+    app.kubernetes.io/component: api
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    # ArgoCD Image Updater actualiza esta anotação automaticamente
+    argocd-image-updater.argoproj.io/image-list: myapp=ghcr.io/YOUR_ORG/gitops-demo
+    argocd-image-updater.argoproj.io/myapp.update-strategy: latest
+    argocd-image-updater.argoproj.io/write-back-method: git
+spec:
+  # Replicas definidas por overlay (dev=1, prod=3)
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: myapp
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero-downtime deploy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: myapp
+        app.kubernetes.io/component: api
+      annotations:
+        # Força restart quando ConfigMap muda
+        kubectl.kubernetes.io/restartedAt: "2024-01-01T00:00:00Z"
+    spec:
+      # Security context ao nível do pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+
+      # Graceful shutdown
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: myapp
+          # Tag gerida pelo ArgoCD Image Updater — não editar manualmente
+          image: ghcr.io/YOUR_ORG/gitops-demo:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: myapp-config
+                  key: environment
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: myapp-config
+                  key: app_version
+
+          # Liveness: reinicia o pod se a app travar
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # Readiness: só recebe tráfego quando pronta
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Startup probe: tempo extra no arranque inicial
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+
+          # Recursos base (overridden por overlay)
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+          # Security context ao nível do container
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Volume para escrita temporária (necessário com readOnlyRootFilesystem)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}

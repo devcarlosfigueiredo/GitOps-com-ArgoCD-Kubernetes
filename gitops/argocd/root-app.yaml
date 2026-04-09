@@ -1,0 +1,38 @@
+# =============================================================================
+# Root App (App of Apps) — gitops/argocd/root-app.yaml
+#
+# O padrão "App of Apps": uma Application que gere todas as outras.
+# Bootstrap: aplicar este YAML uma única vez no cluster.
+# Tudo o resto é gerido pelo ArgoCD automaticamente a partir do Git.
+#
+# kubectl apply -f gitops/argocd/root-app.yaml -n argocd
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  labels:
+    app.kubernetes.io/managed-by: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/YOUR_ORG/gitops-argocd-demo
+    targetRevision: main
+    path: gitops/argocd
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

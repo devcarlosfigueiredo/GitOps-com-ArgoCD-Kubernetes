@@ -1,0 +1,71 @@
+# =============================================================================
+# AppProject — gitops/argocd/appproject.yaml
+# Define RBAC, repositórios e clusters permitidos.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: gitops-demo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "GitOps Demo — myapp em dev e prod"
+
+  sourceRepos:
+    - https://github.com/YOUR_ORG/gitops-argocd-demo
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: myapp-dev
+    - server: https://kubernetes.default.svc
+      namespace: myapp-prod
+
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ConfigMap
+    - group: "networking.k8s.io"
+      kind: Ingress
+    - group: "autoscaling"
+      kind: HorizontalPodAutoscaler
+    - group: "policy"
+      kind: PodDisruptionBudget
+    - group: "batch"
+      kind: Job
+
+  roles:
+    - name: admin
+      description: Acesso total ao projecto
+      policies:
+        - p, proj:gitops-demo:admin, applications, *, gitops-demo/*, allow
+      groups:
+        - platform-team
+
+    - name: developer
+      description: Pode ver e sincronizar, mas não deletar
+      policies:
+        - p, proj:gitops-demo:developer, applications, get, gitops-demo/*, allow
+        - p, proj:gitops-demo:developer, applications, sync, gitops-demo/*, allow
+      groups:
+        - dev-team
+
+  syncWindows:
+    - kind: allow
+      schedule: "0 8 * * 1-5"
+      duration: 10h
+      applications:
+        - myapp-prod
+      manualSync: true
+    - kind: allow
+      schedule: "* * * * *"
+      duration: 24h
+      applications:
+        - myapp-dev
